@@ -20,24 +20,34 @@ struct Message: Decodable, Identifiable {
     var text: String
 }
 
-struct Endpoint {
+struct Endpoint <T: Decodable> {
     var url: URL
-    
-    static let headlines = Endpoint(url: URL(string: "https://hws.dev/headlines.json")!)
-    static let messages = Endpoint(url: URL(string: "https://hws.dev/messages.json")!)
+    var type: T.Type
+}
+
+extension Endpoint where T == [News] {
+    static let headlines = Endpoint(url: URL(string: "https://hws.dev/headlines.json")!, type: [News].self)
+}
+
+extension Endpoint where T == [Message] {
+    static let messages = Endpoint(url: URL(string: "https://hws.dev/messages.json")!, type: [Message].self)
 }
 
 struct NetworkManager {
-    func fetch(_ resource: Endpoint) async throws -> Data {
+    func fetch<T>(_ resource: Endpoint<T>) async throws -> T {
         var request = URLRequest(url: resource.url)
         var (data, _) = try await URLSession.shared.data(for: request)
-        return data
+        
+        let decoder = JSONDecoder()
+        return try decoder.decode(T.self, from: data)
     }
 }
 
 struct ContentView: View {
     @State private var headlines = [News]()
     @State private var messages = [Message]()
+    
+    let networkManager = NetworkManager()
     
     var body: some View {
         List {
@@ -65,14 +75,8 @@ struct ContentView: View {
         }
         .task {
             do {
-                let headlinesURL = URL(string: "https://hws.dev/headlines.json")!
-                let messagesURL = URL(string: "https://hws.dev/messages.json")!
-                
-                let (headlineData, _) = try await URLSession.shared.data(from: headlinesURL)
-                let (messageData, _) = try await URLSession.shared.data(from: messagesURL)
-                
-                headlines = try JSONDecoder().decode([News].self, from: headlineData)
-                messages = try JSONDecoder().decode([Message].self, from: messageData)
+                headlines = try await networkManager.fetch(.headlines)
+                messages = try await networkManager.fetch(.messages)
             } catch {
                 print("Error handling is a smart move!")
             }
