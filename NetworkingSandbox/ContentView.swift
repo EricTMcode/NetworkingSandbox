@@ -20,6 +20,21 @@ struct Message: Decodable, Identifiable {
     var text: String
 }
 
+struct Endpoint {
+    var url: URL
+    
+    static let headlines = Endpoint(url: URL(string: "https://hws.dev/headlines.json")!)
+    static let messages = Endpoint(url: URL(string: "https://hws.dev/messages.json")!)
+}
+
+struct NetworkManager {
+    func fetch(_ resource: Endpoint) async throws -> Data {
+        var request = URLRequest(url: resource.url)
+        var (data, _) = try await URLSession.shared.data(for: request)
+        return data
+    }
+}
+
 struct ContentView: View {
     @State private var headlines = [News]()
     @State private var messages = [Message]()
