@@ -23,6 +23,8 @@ struct Message: Decodable, Identifiable {
 struct Endpoint <T: Decodable> {
     var url: URL
     var type: T.Type
+    var method = HTTPMethod.get
+    var headers = [String: String]()
 }
 
 extension Endpoint where T == [News] {
@@ -33,9 +35,21 @@ extension Endpoint where T == [Message] {
     static let messages = Endpoint(url: URL(string: "https://hws.dev/messages.json")!, type: [Message].self)
 }
 
+enum HTTPMethod: String {
+    case delete, get, patch, post, put
+    
+    var rawValue: String {
+        String(describing: self).uppercased()
+    }
+}
+
 struct NetworkManager {
-    func fetch<T>(_ resource: Endpoint<T>) async throws -> T {
+    func fetch<T>(_ resource: Endpoint<T>, with data: Data? = nil) async throws -> T {
         var request = URLRequest(url: resource.url)
+        request.httpMethod = resource.method.rawValue
+        request.httpBody = data
+        request.allHTTPHeaderFields = resource.headers
+        
         var (data, _) = try await URLSession.shared.data(for: request)
         
         let decoder = JSONDecoder()
@@ -77,6 +91,7 @@ struct ContentView: View {
             do {
                 headlines = try await networkManager.fetch(.headlines)
                 messages = try await networkManager.fetch(.messages)
+
             } catch {
                 print("Error handling is a smart move!")
             }
