@@ -21,18 +21,18 @@ struct Message: Decodable, Identifiable {
 }
 
 struct Endpoint <T: Decodable> {
-    var url: URL
+    var path: String
     var type: T.Type
     var method = HTTPMethod.get
     var headers = [String: String]()
 }
 
 extension Endpoint where T == [News] {
-    static let headlines = Endpoint(url: URL(string: "https://hws.dev/headlines.json")!, type: [News].self)
+    static let headlines = Endpoint(path: "headlines.json", type: [News].self)
 }
 
 extension Endpoint where T == [Message] {
-    static let messages = Endpoint(url: URL(string: "https://hws.dev/messages.json")!, type: [Message].self)
+    static let messages = Endpoint(path: "messages.json", type: [Message].self)
 }
 
 enum HTTPMethod: String {
@@ -43,17 +43,81 @@ enum HTTPMethod: String {
     }
 }
 
+struct AppEnvironment {
+    var name: String
+    var baseURL: URL
+    var session: URLSession
+    
+    static let production = AppEnvironment(
+        name: "Production",
+        baseURL: URL(string: "https://hws.dev")!,
+        session: {
+            let configuration = URLSessionConfiguration.default
+            configuration.httpAdditionalHeaders = [
+                "APIKey": "production-key-from-keychain"
+            ]
+            return URLSession(configuration: configuration)
+        }()
+    )
+    
+    #if DEBUG
+    static let testing = AppEnvironment(
+        name: "Testing",
+        baseURL: URL(string: "https://hws.dev")!,
+        session: {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+            configuration.httpAdditionalHeaders = [
+                "APIKey": "test-key"
+            ]
+            return URLSession(configuration: configuration)
+        }()
+    )
+    #endif
+}
+
 struct NetworkManager {
+    var environment: AppEnvironment
+    
     func fetch<T>(_ resource: Endpoint<T>, with data: Data? = nil) async throws -> T {
-        var request = URLRequest(url: resource.url)
+        guard let url = URL(string: resource.path, relativeTo: environment.baseURL) else {
+            throw URLError(.unsupportedURL)
+        }
+        
+        var request = URLRequest(url: url)
         request.httpMethod = resource.method.rawValue
         request.httpBody = data
         request.allHTTPHeaderFields = resource.headers
         
-        var (data, _) = try await URLSession.shared.data(for: request)
+        var (data, _) = try await environment.session.data(for: request)
         
         let decoder = JSONDecoder()
         return try decoder.decode(T.self, from: data)
+    }
+    
+    func fetch<T>(_ resource: Endpoint<T>, with data: Data? = nil, attempts: Int, retryDelay: Double = 1) async throws -> T {
+        do {
+            print("Attempting to fetch (Attemps remaining: \(attempts)")
+            return try await fetch(resource, with: data)
+        } catch {
+            if attempts > 1 {
+                try await Task.sleep(for: .microseconds(Int(retryDelay * 1000)))
+                return try await fetch(resource, with: data, attempts: attempts - 1, retryDelay: retryDelay)
+            } else {
+                throw error
+            }
+        }
+    }
+}
+
+struct NetworkManagerKey: EnvironmentKey {
+    static var defaultValue = NetworkManager(environment: .testing)
+}
+
+extension EnvironmentValues {
+    var networkManager: NetworkManager {
+        get { self[NetworkManagerKey.self] }
+        set { self[NetworkManagerKey.self] = newValue }
     }
 }
 
@@ -61,7 +125,7 @@ struct ContentView: View {
     @State private var headlines = [News]()
     @State private var messages = [Message]()
     
-    let networkManager = NetworkManager()
+    @Environment(\.networkManager) var networkManager
     
     var body: some View {
         List {
@@ -91,7 +155,7 @@ struct ContentView: View {
             do {
                 headlines = try await networkManager.fetch(.headlines)
                 messages = try await networkManager.fetch(.messages)
-
+                
             } catch {
                 print("Error handling is a smart move!")
             }
